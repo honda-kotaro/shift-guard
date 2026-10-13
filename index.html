@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shift Guard</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Arial, "Noto Sans JP", sans-serif;
+  background: #f4f6f8;
+  color: #222;
+}
+
+.app {
+  max-width: 650px;
+  margin: auto;
+  padding: 24px 16px 60px;
+}
+
+h1 { margin-bottom: 4px; }
+
+.subtitle {
+  margin-top: 0;
+  color: #777;
+}
+
+.card {
+  background: white;
+  border-radius: 18px;
+  padding: 22px;
+  margin-top: 18px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.07);
+}
+
+.today.work { border-left: 8px solid #e53935; }
+.today.off  { border-left: 8px solid #43a047; }
+
+.status {
+  font-size: 27px;
+  font-weight: bold;
+  margin: 12px 0;
+}
+
+.shift-detail {
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.tomorrow {
+  border-left: 8px solid #1976d2;
+}
+
+input {
+  width: 100%;
+  padding: 13px;
+  margin: 6px 0;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 11px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.save {
+  background: #1976d2;
+  color: white;
+}
+
+.cancel {
+  background: #777;
+  color: white;
+  display: none;
+}
+
+.shift-item {
+  padding: 16px 0;
+  border-bottom: 1px solid #ddd;
+}
+
+.shift-item:last-child {
+  border-bottom: none;
+}
+
+.shift-date {
+  font-weight: bold;
+  font-size: 17px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.actions button {
+  width: auto;
+  padding: 8px 14px;
+  margin: 0;
+}
+
+.edit {
+  background: #eeeeee;
+  color: #222;
+}
+
+.delete {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.calendar-header button {
+  width: 45px;
+  margin: 0;
+  background: #eee;
+  color: #222;
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7,1fr);
+  gap: 5px;
+  margin-top: 15px;
+}
+
+.day-name {
+  text-align: center;
+  font-size: 12px;
+  color: #777;
+}
+
+.day {
+  min-height: 55px;
+  border-radius: 9px;
+  padding: 6px;
+  text-align: center;
+  background: #f5f5f5;
+  font-size: 14px;
+}
+
+.day.work {
+  background: #ffe5e5;
+  font-weight: bold;
+}
+
+.day.today {
+  outline: 2px solid #1976d2;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  background: #e53935;
+  border-radius: 50%;
+  margin: 5px auto 0;
+}
+
+.message {
+  color: #1976d2;
+  margin-top: 10px;
+  font-size: 14px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<h1>🛡️ Shift Guard</h1>
+<p class="subtitle">勤務の勘違いを防ぐ</p>
+
+<div id="todayCard" class="card today">
+  <div id="todayDate"></div>
+  <div id="todayStatus" class="status"></div>
+  <div id="todayDetail" class="shift-detail"></div>
+</div>
+
+<div class="card tomorrow">
+  <strong>明日の予定</strong>
+  <div id="tomorrowDetail" class="shift-detail"></div>
+</div>
+
+<div class="card">
+  <div class="calendar-header">
+    <button onclick="changeMonth(-1)">←</button>
+    <h2 id="calendarTitle"></h2>
+    <button onclick="changeMonth(1)">→</button>
+  </div>
+
+  <div class="calendar" id="calendar"></div>
+</div>
+
+<div class="card">
+  <h2 id="formTitle">シフト登録</h2>
+
+  <input type="date" id="date">
+
+  <input
+    type="text"
+    id="workplace"
+    placeholder="勤務先（例：フーズラボ）"
+  >
+
+  <input type="time" id="start">
+  <input type="time" id="end">
+
+  <button class="save" onclick="saveShift()">
+    シフトを保存
+  </button>
+
+  <button
+    id="cancelButton"
+    class="cancel"
+    onclick="cancelEdit()"
+  >
+    編集をキャンセル
+  </button>
+
+  <div id="message" class="message"></div>
+</div>
+
+<div class="card">
+  <h2>今後のシフト</h2>
+  <div id="shiftList"></div>
+</div>
+
+</div>
+
+<script>
+
+let shifts =
+  JSON.parse(localStorage.getItem("shifts")) || {};
+
+let editingDate = null;
+
+const now = new Date();
+
+let calendarYear = now.getFullYear();
+let calendarMonth = now.getMonth();
+
+function formatDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth()+1).padStart(2,"0");
+  const d = String(date.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+
+function todayString() {
+  return formatDate(new Date());
+}
+
+function tomorrowString() {
+  const d = new Date();
+  d.setDate(d.getDate()+1);
+  return formatDate(d);
+}
+
+function renderToday() {
+
+  const today = todayString();
+  const shift = shifts[today];
+
+  document.getElementById("todayDate").textContent =
+    `今日：${today}`;
+
+  const card = document.getElementById("todayCard");
+
+  if (shift) {
+    card.className = "card today work";
+
+    document.getElementById("todayStatus").textContent =
+      "🔴 本日勤務あり";
+
+    document.getElementById("todayDetail").innerHTML =
+      `<strong>${escapeHTML(shift.workplace)}</strong><br>
+       ${shift.start} ～ ${shift.end}`;
+
+  } else {
+    card.className = "card today off";
+
+    document.getElementById("todayStatus").textContent =
+      "🟢 本日の勤務なし";
+
+    document.getElementById("todayDetail").textContent =
+      "登録されているシフトはありません。";
+  }
+}
+
+function renderTomorrow() {
+
+  const tomorrow = tomorrowString();
+  const shift = shifts[tomorrow];
+
+  const box = document.getElementById("tomorrowDetail");
+
+  if (shift) {
+    box.innerHTML =
+      `<strong>🔵 勤務あり</strong><br>
+       ${escapeHTML(shift.workplace)}<br>
+       ${shift.start} ～ ${shift.end}`;
+  } else {
+    box.textContent = "勤務なし";
+  }
+}
+
+function saveShift() {
+
+  const date = document.getElementById("date").value;
+  const workplace =
+    document.getElementById("workplace").value.trim();
+  const start = document.getElementById("start").value;
+  const end = document.getElementById("end").value;
+
+  if (!date || !workplace || !start || !end) {
+    alert("すべて入力してください");
+    return;
+  }
+
+  if (editingDate && editingDate !== date) {
+    delete shifts[editingDate];
+  }
+
+  shifts[date] = {
+    workplace,
+    start,
+    end
+  };
+
+  localStorage.setItem("shifts", JSON.stringify(shifts));
+
+  document.getElementById("message").textContent =
+    `${date} のシフトを保存しました`;
+
+  clearForm();
+  renderAll();
+}
+
+function editShift(date) {
+
+  const shift = shifts[date];
+
+  document.getElementById("date").value = date;
+  document.getElementById("workplace").value =
+    shift.workplace;
+  document.getElementById("start").value = shift.start;
+  document.getElementById("end").value = shift.end;
+
+  editingDate = date;
+
+  document.getElementById("formTitle").textContent =
+    "シフト編集";
+
+  document.getElementById("cancelButton").style.display =
+    "block";
+
+  window.scrollTo({
+    top: document.getElementById("formTitle").offsetTop,
+    behavior: "smooth"
+  });
+}
+
+function deleteShift(date) {
+
+  if (!confirm(`${date} のシフトを削除しますか？`)) {
+    return;
+  }
+
+  delete shifts[date];
+
+  localStorage.setItem("shifts", JSON.stringify(shifts));
+
+  renderAll();
+}
+
+function cancelEdit() {
+  clearForm();
+}
+
+function clearForm() {
+
+  editingDate = null;
+
+  document.getElementById("date").value =
+    todayString();
+
+  document.getElementById("workplace").value = "";
+  document.getElementById("start").value = "";
+  document.getElementById("end").value = "";
+
+  document.getElementById("formTitle").textContent =
+    "シフト登録";
+
+  document.getElementById("cancelButton").style.display =
+    "none";
+}
+
+function renderList() {
+
+  const container = document.getElementById("shiftList");
+  container.innerHTML = "";
+
+  const dates = Object.keys(shifts)
+    .filter(date => date >= todayString())
+    .sort();
+
+  if (dates.length === 0) {
+    container.textContent =
+      "今後のシフトは登録されていません。";
+    return;
+  }
+
+  dates.forEach(date => {
+
+    const shift = shifts[date];
+
+    const item = document.createElement("div");
+    item.className = "shift-item";
+
+    item.innerHTML = `
+      <div class="shift-date">${date}</div>
+      <div>
+        ${escapeHTML(shift.workplace)}
+        ｜ ${shift.start} ～ ${shift.end}
+      </div>
+
+      <div class="actions">
+        <button
+          class="edit"
+          onclick="editShift('${date}')"
+        >
+          編集
+        </button>
+
+        <button
+          class="delete"
+          onclick="deleteShift('${date}')"
+        >
+          削除
+        </button>
+      </div>
+    `;
+
+    container.appendChild(item);
+  });
+}
+
+function renderCalendar() {
+
+  const calendar = document.getElementById("calendar");
+
+  calendar.innerHTML = "";
+
+  const names =
+    ["日","月","火","水","木","金","土"];
+
+  names.forEach(name => {
+    const div = document.createElement("div");
+    div.className = "day-name";
+    div.textContent = name;
+    calendar.appendChild(div);
+  });
+
+  document.getElementById("calendarTitle").textContent =
+    `${calendarYear}年 ${calendarMonth + 1}月`;
+
+  const first =
+    new Date(calendarYear, calendarMonth, 1);
+
+  const last =
+    new Date(calendarYear, calendarMonth + 1, 0);
+
+  for (let i=0; i<first.getDay(); i++) {
+    calendar.appendChild(document.createElement("div"));
+  }
+
+  for (let day=1; day<=last.getDate(); day++) {
+
+    const date =
+      new Date(calendarYear, calendarMonth, day);
+
+    const key = formatDate(date);
+
+    const div = document.createElement("div");
+    div.className = "day";
+
+    if (shifts[key]) {
+      div.classList.add("work");
+    }
+
+    if (key === todayString()) {
+      div.classList.add("today");
+    }
+
+    div.innerHTML = `<div>${day}</div>`;
+
+    if (shifts[key]) {
+      div.innerHTML += `<div class="dot"></div>`;
+    }
+
+    calendar.appendChild(div);
+  }
+}
+
+function changeMonth(amount) {
+
+  calendarMonth += amount;
+
+  if (calendarMonth > 11) {
+    calendarMonth = 0;
+    calendarYear++;
+  }
+
+  if (calendarMonth < 0) {
+    calendarMonth = 11;
+    calendarYear--;
+  }
+
+  renderCalendar();
+}
+
+function escapeHTML(value) {
+  const div = document.createElement("div");
+  div.textContent = value;
+  return div.innerHTML;
+}
+
+function renderAll() {
+  renderToday();
+  renderTomorrow();
+  renderCalendar();
+  renderList();
+}
+
+document.getElementById("date").value =
+  todayString();
+
+renderAll();
+
+</script>
+
+</body>
+</html>
